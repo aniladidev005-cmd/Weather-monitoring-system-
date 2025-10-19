@@ -1,0 +1,100 @@
+#include <ESP8266WiFi.h>
+#include <DHT.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <ThingSpeak.h>
+
+// ----------------- WIFI and ThingSpeak -----------------
+const char* ssid = "your ssid";
+const char* password = "password";
+
+unsigned long myChannelNumber = channel id; // ThingSpeak channel number
+const char* myWriteAPIKey = "write API key";
+
+WiFiClient client;
+
+// ----------------- DHT11 -----------------
+#define DHTPIN 2        // D4 on NodeMCU (GPIO2)
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
+
+// ----------------- Sensors -----------------
+#define LDR_PIN A0           // LDR analog
+#define RAIN_DIGITAL_PIN D5  // Rain sensor digital output
+
+LiquidCrystal_I2C lcd(0x27,16,2); // LCD I2C address
+
+void setup() {
+  Serial.begin(115200);
+
+  // I2C for NodeMCU
+  Wire.begin(D2, D1); // SDA, SCL
+  lcd.init();
+  lcd.backlight();
+
+  dht.begin();
+  pinMode(LDR_PIN, INPUT);
+  pinMode(RAIN_DIGITAL_PIN, INPUT);
+
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi");
+
+  ThingSpeak.begin(client);
+}
+
+void loop() {
+  // -------- Read DHT11 --------
+  float temp = dht.readTemperature();
+  float hum = dht.readHumidity();
+
+  // -------- Read LDR --------
+  int ldrValue = analogRead(LDR_PIN);
+  String lightStatus = (ldrValue < 800) ? "Bright" : "Dark"; // adjust threshold
+
+  // -------- Read Rain Sensor --------
+  int rainDigital = digitalRead(RAIN_DIGITAL_PIN);
+  String rainStatus = (rainDigital == 0) ? "Rainy" : "Dry";
+
+  // -------- Display on LCD --------
+  lcd.clear();
+  if (isnan(temp) || isnan(hum)) {
+    lcd.setCursor(0,0);
+    lcd.print("DHT Error");
+  } else {
+    lcd.setCursor(0,0);
+    lcd.print("T:"); lcd.print(temp,1); lcd.print("C ");
+    lcd.print("H:"); lcd.print(hum,0); lcd.print("%");
+  }
+
+  lcd.setCursor(0,1);
+  lcd.print(lightStatus); lcd.print(" ");
+  lcd.print(rainStatus);
+
+  // -------- Print to Serial --------
+  Serial.print("Temp: "); Serial.print(temp); Serial.print(" C ");
+  Serial.print("Humidity: "); Serial.print(hum); Serial.println(" %");
+  Serial.print("LDR: "); Serial.print(ldrValue);
+  Serial.print(" Light: "); Serial.print(lightStatus);
+  Serial.print(" Rain: "); Serial.println(rainStatus);
+
+  // -------- Upload to ThingSpeak --------
+  ThingSpeak.setField(1, temp);
+  ThingSpeak.setField(2, hum);
+  ThingSpeak.setField(3, ldrValue);
+  ThingSpeak.setField(4, rainDigital);
+
+  int response = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
+  if(response == 200){
+    Serial.println("Channel update successful.");
+  } else{
+    Serial.println("Problem updating channel. HTTP error code " + String(response));
+  }
+
+  delay(20000); // 20 seconds delay (ThingSpeak free limit)
+}
